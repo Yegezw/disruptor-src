@@ -113,14 +113,15 @@ public final class WorkProcessor<T>
 
         notifyStart();
 
-        boolean processedSequence = true;
-        long cachedAvailableSequence = Long.MIN_VALUE;
-        long nextSequence = sequence.get();
-        T event = null;
+        boolean processedSequence = true;              // 最近是否处理过了序列
+        long cachedAvailableSequence = Long.MIN_VALUE; // 缓存的最大可消费序号
+        long nextSequence = sequence.get();            // 待消费序列
+        T event = null;                                // 待消费事件
         while (true)
         {
             try
             {
+                // 如果已经处理过序列, 则重新 CAS 争抢一个新的待消费序列
                 // if previous sequence was processed - fetch the next sequence and set
                 // that we have successfully processed the previous sequence
                 // typically, this will be true
@@ -128,20 +129,21 @@ public final class WorkProcessor<T>
                 // is thrown from the WorkHandler
                 if (processedSequence)
                 {
-                    processedSequence = false;
+                    processedSequence = false; // 争抢到了一个新的待消费序列, 但还未实际进行消费(标记为 false)
                     do
                     {
                         nextSequence = workSequence.get() + 1L;
-                        sequence.set(nextSequence - 1L);
+                        sequence.set(nextSequence - 1L); // 注意: 最大已申请序号 - 1
                     }
                     while (!workSequence.compareAndSet(nextSequence - 1L, nextSequence));
                 }
 
+                // 多线程消费者一次只能消费一个序号
                 if (cachedAvailableSequence >= nextSequence)
                 {
                     event = ringBuffer.get(nextSequence);
                     workHandler.onEvent(event);
-                    processedSequence = true;
+                    processedSequence = true; // 消费者线程确实把数据消费完了, 标记为 true, 下次循环中将 CAS 争抢下一个新的消费序列
                 }
                 else
                 {
@@ -163,7 +165,7 @@ public final class WorkProcessor<T>
             {
                 // handle, mark as processed, unless the exception handler threw an exception
                 exceptionHandler.handleEventException(ex, nextSequence, event);
-                processedSequence = true;
+                processedSequence = true; // 消费者消费时发生了异常, 也认为是成功消费了, 避免阻塞消费序列, 下次循环会 CAS 争抢一个新的消费序列
             }
         }
 

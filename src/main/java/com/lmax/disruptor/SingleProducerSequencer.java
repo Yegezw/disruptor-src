@@ -15,9 +15,9 @@
  */
 package com.lmax.disruptor;
 
-import java.util.concurrent.locks.LockSupport;
-
 import com.lmax.disruptor.util.Util;
+
+import java.util.concurrent.locks.LockSupport;
 
 abstract class SingleProducerSequencerPad extends AbstractSequencer
 {
@@ -35,6 +35,8 @@ abstract class SingleProducerSequencerFields extends SingleProducerSequencerPad
     {
         super(bufferSize, waitStrategy);
     }
+
+    // 和 Sequence 相关的都做了缓存行填充
 
     /**
      * Set to -1 as sequence starting point
@@ -121,25 +123,34 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
             throw new IllegalArgumentException("n must be > 0");
         }
 
-        long nextValue = this.nextValue;
+        long nextValue = this.nextValue;              // 已被申请的生产序号
 
-        long nextSequence = nextValue + n;
-        long wrapPoint = nextSequence - bufferSize;
-        long cachedGatingSequence = this.cachedValue;
+        long nextSequence = nextValue + n;            // 目标生产序号
+        long wrapPoint = nextSequence - bufferSize;   // 上一轮覆盖点
+        long cachedGatingSequence = this.cachedValue; // 缓存的最小消费序号
 
+        // keep 上一轮覆盖点 <= 最小消费序号
+        // RingBuffer.resetTo() cachedGatingSequence > nextValue
+        // https://github.com/LMAX-Exchange/disruptor/issues/280
         if (wrapPoint > cachedGatingSequence || cachedGatingSequence > nextValue)
         {
+            // Disruptor 运行过程中动态添加新消费者
+            // AbstractSequencer.addGatingSequences()
+            // https://github.com/LMAX-Exchange/disruptor/issues/291
             cursor.setVolatile(nextValue);  // StoreLoad fence
 
+            // 最小消费序号
             long minSequence;
             while (wrapPoint > (minSequence = Util.getMinimumSequence(gatingSequences, nextValue)))
             {
                 LockSupport.parkNanos(1L); // TODO: Use waitStrategy to spin?
             }
 
+            // 缓存最小消费序号
             this.cachedValue = minSequence;
         }
 
+        // 记录已申请的生产序号
         this.nextValue = nextSequence;
 
         return nextSequence;
@@ -203,6 +214,9 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
     @Override
     public void publish(long sequence)
     {
+        // update ring buffer
+        // StoreStore barrier
+        // update cursor
         cursor.set(sequence);
         waitStrategy.signalAllWhenBlocking();
     }

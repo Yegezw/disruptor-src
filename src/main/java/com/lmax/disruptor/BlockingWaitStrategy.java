@@ -15,11 +15,11 @@
  */
 package com.lmax.disruptor;
 
+import com.lmax.disruptor.util.ThreadHints;
+
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
-import com.lmax.disruptor.util.ThreadHints;
 
 /**
  * Blocking strategy that uses a lock and condition variable for {@link EventProcessor}s waiting on a barrier.
@@ -35,6 +35,7 @@ public final class BlockingWaitStrategy implements WaitStrategy
     public long waitFor(long sequence, Sequence cursorSequence, Sequence dependentSequence, SequenceBarrier barrier)
         throws AlertException, InterruptedException
     {
+        // 最大可消费序号
         long availableSequence;
         if (cursorSequence.get() < sequence)
         {
@@ -44,7 +45,7 @@ public final class BlockingWaitStrategy implements WaitStrategy
                 while (cursorSequence.get() < sequence)
                 {
                     barrier.checkAlert();
-                    processorNotifyCondition.await();
+                    processorNotifyCondition.await(); // 阻塞等待生产者
                 }
             }
             finally
@@ -53,6 +54,7 @@ public final class BlockingWaitStrategy implements WaitStrategy
             }
         }
 
+        // 自旋等待上游消费者
         while ((availableSequence = dependentSequence.get()) < sequence)
         {
             barrier.checkAlert();
