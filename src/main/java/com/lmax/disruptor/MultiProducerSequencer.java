@@ -15,11 +15,10 @@
  */
 package com.lmax.disruptor;
 
-import java.util.concurrent.locks.LockSupport;
-
+import com.lmax.disruptor.util.Util;
 import sun.misc.Unsafe;
 
-import com.lmax.disruptor.util.Util;
+import java.util.concurrent.locks.LockSupport;
 
 
 /**
@@ -116,19 +115,21 @@ public final class MultiProducerSequencer extends AbstractSequencer
             throw new IllegalArgumentException("n must be > 0");
         }
 
-        long current;
-        long next;
+        long current; // 当前已申请序号(可能未发布)
+        long next;    // 目标生产序号
 
         do
         {
-            current = cursor.get();
-            next = current + n;
+            current = cursor.get(); // 当前已申请序号(可能未发布)
+            next = current + n;     // 目标生产序号
 
-            long wrapPoint = next - bufferSize;
-            long cachedGatingSequence = gatingSequenceCache.get();
+            long wrapPoint = next - bufferSize;                    // 上一轮覆盖点
+            long cachedGatingSequence = gatingSequenceCache.get(); // 缓存的最小消费序号
 
+            // keep 上一轮覆盖点 <= 最小消费序号
             if (wrapPoint > cachedGatingSequence || cachedGatingSequence > current)
             {
+                // 最小消费序号
                 long gatingSequence = Util.getMinimumSequence(gatingSequences, current);
 
                 if (wrapPoint > gatingSequence)
@@ -137,6 +138,7 @@ public final class MultiProducerSequencer extends AbstractSequencer
                     continue;
                 }
 
+                // 缓存最小消费序号
                 gatingSequenceCache.set(gatingSequence);
             }
             else if (cursor.compareAndSet(current, next))
@@ -276,6 +278,7 @@ public final class MultiProducerSequencer extends AbstractSequencer
     @Override
     public long getHighestPublishedSequence(long lowerBound, long availableSequence)
     {
+        // 获取 [lowerBound ... availableSequence] 最大已发布序号
         for (long sequence = lowerBound; sequence <= availableSequence; sequence++)
         {
             if (!isAvailable(sequence))
@@ -284,6 +287,7 @@ public final class MultiProducerSequencer extends AbstractSequencer
             }
         }
 
+        // [lowerBound ... availableSequence] 不存在未发布的序号
         return availableSequence;
     }
 
